@@ -8,11 +8,18 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 const app = express();
+
+// Very permissive CORS configuration
 app.use(cors({
-  origin: "*",
+  origin: function(origin, callback) {
+    // Allow any origin
+    callback(null, true);
+  },
   methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: "*",
+  allowedHeaders: ["Content-Type", "Authorization", "x-api-key", "x-client-info", "*"],
+  credentials: true
 }));
+
 app.use(express.json());
 
 const transports = new Map();
@@ -95,27 +102,36 @@ function createServer() {
   return server;
 }
 
+// Helper to get absolute URL
+function getAbsoluteUrl(req, path) {
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.get('host');
+  return `${protocol}://${host}${path}`;
+}
+
 // SSE endpoint — Claude.ai connects here
 app.get("/sse", async (req, res) => {
-  // Set headers for SSE
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders();
+  try {
+    // Provide an absolute URL for the endpoint
+    const absoluteMessageUrl = getAbsoluteUrl(req, "/message");
+    const transport = new SSEServerTransport(absoluteMessageUrl, res);
+    const sessionId = transport.sessionId;
+    transports.set(sessionId, transport);
 
-  const transport = new SSEServerTransport("/message", res);
-  const sessionId = transport.sessionId;
-  transports.set(sessionId, transport);
+    const server = createServer();
 
-  const server = createServer();
+    req.on("close", () => {
+      transports.delete(sessionId);
+      server.close();
+    });
 
-  req.on("close", () => {
-    transports.delete(sessionId);
-    server.close();
-  });
-
-  await server.connect(transport);
+    await server.connect(transport);
+  } catch (error) {
+    console.error("Error establishing SSE connection:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to establish SSE connection" });
+    }
+  }
 });
 
 // Message endpoint — Claude.ai sends tool calls here
@@ -126,7 +142,15 @@ app.post("/message", async (req, res) => {
     res.status(400).json({ error: "No active SSE session found. Please reconnect." });
     return;
   }
-  await transport.handlePostMessage(req, res);
+  
+  try {
+    await transport.handlePostMessage(req, res);
+  } catch (error) {
+    console.error("Error handling post message:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to handle message" });
+    }
+  }
 });
 
 // Health check for Render (keeps the service alive)
@@ -147,3 +171,17 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Kinetikfield MCP Server is running on port ${PORT}`);
 });
+
+// Self-ping to keep Render awake (runs every 14 minutes)
+setInterval(async () => {
+  try {
+    const host = process.env.RENDER_EXTERNAL_HOSTNAME;
+    if (host) {
+      const url = `https://${host}/health`;
+      const response = await fetch(url);
+      console.log(`Self-ping to ${url} status: ${response.status}`);
+    }
+  } catch (err) {
+    console.log("Self-ping failed:", err.message);
+  }
+}, 14 * 60 * 1000);
