@@ -1,5 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import express from "express";
 import cors from "cors";
 import {
@@ -174,29 +174,20 @@ function createServer() {
   return server;
 }
 
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: () => Math.random().toString(36).substring(2, 15)
-});
+let transport;
 
 const server = createServer();
-server.connect(transport).catch(console.error);
 
-// The main endpoint for Claude.ai Streamable HTTP
-app.head("/", (req, res) => {
-  res.setHeader("MCP-Protocol-Version", "2025-06-18");
-  res.status(200).end();
+app.get("/sse", async (req, res) => {
+  transport = new SSEServerTransport("/message", res);
+  await server.connect(transport);
 });
 
-app.all("/", async (req, res) => {
-  try {
-    // Add the protocol version header expected by Claude
-    res.setHeader("MCP-Protocol-Version", "2025-06-18");
-    await transport.handleRequest(req, res, req.body);
-  } catch (error) {
-    console.error("Error handling request:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Failed to handle message" });
-    }
+app.post("/message", async (req, res) => {
+  if (transport) {
+    await transport.handlePostMessage(req, res);
+  } else {
+    res.status(500).send("Transport not initialized");
   }
 });
 
