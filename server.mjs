@@ -1,5 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import cors from "cors";
 import {
@@ -15,14 +15,12 @@ app.use(cors({
     // Allow any origin
     callback(null, true);
   },
-  methods: ["GET", "POST", "OPTIONS"],
+  methods: ["GET", "POST", "OPTIONS", "HEAD"],
   allowedHeaders: ["Content-Type", "Authorization", "x-api-key", "x-client-info", "*"],
   credentials: true
 }));
 
 app.use(express.json());
-
-const transports = new Map();
 
 function createServer() {
   const server = new Server(
@@ -102,74 +100,39 @@ function createServer() {
   return server;
 }
 
-// Helper to get absolute URL
-function getAbsoluteUrl(req, path) {
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  const host = req.get('host');
-  return `${protocol}://${host}${path}`;
-}
-
-// SSE endpoint — Claude.ai connects here
-app.get("/sse", async (req, res) => {
-  try {
-    // Provide an absolute URL for the endpoint
-    const absoluteMessageUrl = getAbsoluteUrl(req, "/message");
-    const transport = new SSEServerTransport(absoluteMessageUrl, res);
-    const sessionId = transport.sessionId;
-    transports.set(sessionId, transport);
-
-    const server = createServer();
-
-    req.on("close", () => {
-      transports.delete(sessionId);
-      server.close();
-    });
-
-    await server.connect(transport);
-  } catch (error) {
-    console.error("Error establishing SSE connection:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Failed to establish SSE connection" });
-    }
-  }
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: () => Math.random().toString(36).substring(2, 15)
 });
 
-// Message endpoint — Claude.ai sends tool calls here
-app.post("/message", async (req, res) => {
-  const sessionId = req.query.sessionId;
-  const transport = transports.get(sessionId);
-  if (!transport) {
-    res.status(400).json({ error: "No active SSE session found. Please reconnect." });
-    return;
-  }
-  
+const server = createServer();
+server.connect(transport).catch(console.error);
+
+// The main endpoint for Claude.ai Streamable HTTP
+app.head("/", (req, res) => {
+  res.setHeader("MCP-Protocol-Version", "2025-06-18");
+  res.status(200).end();
+});
+
+app.all("/", async (req, res) => {
   try {
-    await transport.handlePostMessage(req, res);
+    // Add the protocol version header expected by Claude
+    res.setHeader("MCP-Protocol-Version", "2025-06-18");
+    await transport.handleRequest(req, res, req.body);
   } catch (error) {
-    console.error("Error handling post message:", error);
+    console.error("Error handling request:", error);
     if (!res.headersSent) {
       res.status(500).json({ error: "Failed to handle message" });
     }
   }
 });
 
-// Health check for Render (keeps the service alive)
-app.get("/", (req, res) => {
-  res.json({
-    name: "Kinetikfield MCP Server",
-    status: "online",
-    activeSessions: transports.size,
-    instructions: "Connect via /sse endpoint"
-  });
-});
-
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", server: "kinetikfield-mcp", sessions: transports.size });
+  res.json({ status: "ok", server: "kinetikfield-mcp" });
 });
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Kinetikfield MCP Server is running on port ${PORT}`);
+  console.log(`🚀 Kinetikfield MCP Server is running on port ${PORT} using Streamable HTTP`);
 });
 
 // Self-ping to keep Render awake (runs every 14 minutes)
