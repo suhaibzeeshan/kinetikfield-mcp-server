@@ -59,6 +59,52 @@ function createServer() {
         description: "List all projects available in the Kinetikfield workspace.",
         inputSchema: { type: "object", properties: {} },
       },
+      {
+        name: "navigate_project",
+        description: "Navigate to a specific project workspace.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            projectName: {
+              type: "string",
+              description: "The name of the project to navigate to (e.g. 'Marketing Studio', 'Cinema Studio')",
+            },
+          },
+          required: ["projectName"],
+        },
+      },
+      {
+        name: "list_project_assets",
+        description: "List all assets within a specific project.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            projectName: {
+              type: "string",
+              description: "The name of the project whose assets you want to list.",
+            },
+          },
+          required: ["projectName"],
+        },
+      },
+      {
+        name: "trigger_project_action",
+        description: "Trigger a specific action within a project.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            projectName: {
+              type: "string",
+              description: "The name of the project.",
+            },
+            actionType: {
+              type: "string",
+              description: "The action to trigger (e.g. 'export_timeline', 'train_model', 'render_preview')",
+            },
+          },
+          required: ["projectName", "actionType"],
+        },
+      },
     ],
   }));
 
@@ -90,6 +136,34 @@ function createServer() {
         content: [{
           type: "text",
           text: `📁 Kinetikfield Workspace Projects:\n\n1. Marketing Studio — Brand campaign toolkit\n2. Cinema Studio — AI-powered video production\n3. AI Influencer — Virtual persona generator\n4. Supercomputer — GPU cluster dashboard`
+        }],
+      };
+    }
+
+    if (name === "navigate_project") {
+      return {
+        content: [{
+          type: "text",
+          text: `🚀 Successfully navigated to [${args.projectName}]. Workspace context updated. You can now list assets or trigger actions here.`
+        }],
+      };
+    }
+
+    if (name === "list_project_assets") {
+      return {
+        content: [{
+          type: "text",
+          text: `📂 Assets in [${args.projectName}]:\n\n- Project_Sequence_01.mp4\n- Brand_Guidelines.pdf\n- Voiceover_Draft.wav\n- Render_Pass_Final.exr`
+        }],
+      };
+    }
+
+    if (name === "trigger_project_action") {
+      const actionId = `act-${Date.now().toString(36)}`;
+      return {
+        content: [{
+          type: "text",
+          text: `⚡ Triggered action '${args.actionType}' in [${args.projectName}].\n\nAction ID: ${actionId}\nStatus: In Progress`
         }],
       };
     }
